@@ -149,6 +149,134 @@ std::string Equation::compile(const std::string &format) const {
     str_vec.push_back(",optimize=\"optimal\")");
     return join(str_vec, "");
   }
+
+  if (format == "orca_age") {
+    std::string ret;
+
+    std::string lhs_str;
+
+    const auto &lhs_tensor = lhs().tensors()[0];
+    std::string lhs_tensor_space;
+
+    // Helper functions
+    auto get_spaces = [](const auto &t) -> std::string {
+      std::string spaces;
+      for (const auto &l : t.upper()) {
+        spaces += orbital_subspaces->label(l.space());
+      }
+      for (const auto &l : t.lower()) {
+        spaces += orbital_subspaces->label(l.space());
+      }
+      return spaces;
+    };
+    auto wicked2orca_permutation = [](const auto &t) -> std::vector<int> {
+
+      const int n = t.indices().size();
+      std::vector<int> indices(n);
+      if (n == 2) {
+        // NOTE: For some reason singles don't follow this convention
+        // returns [0, 1] i.e., noop
+        std::iota(indices.begin(), indices.end(), 0);
+      } else {
+         // returns e.g: [2, 0, 3, 1] and [3, 0, 4, 1, 5, 2]
+         for (int i = 0; i < indices.size() / 2; ++i) {
+           indices[2 * i] = indices.size() / 2 + i;
+           indices[2 * i + 1] = i;
+         }
+       }
+      return indices;
+    };
+    // TODO: For now hard-coded, could be made generic
+    // Also only supports singles and doubles
+    std::unordered_map<std::string, std::string> wicked2orca_spaces{
+        {"ca", "it"},     {"cv", "ia"},     {"av", "ta"},     {"ccvv", "ijab"},
+        {"ccaa", "ijtu"}, {"aavv", "tuab"}, {"cavv", "itab"}, {"ccav", "ijta"},
+        {"caaa", "ituv"}, {"aaav", "tuva"}, {"caav", "itua"}};
+    std::map<std::string, std::string> index_map;
+    std::vector<std::string> unused_indices = {
+        "z", "y", "x", "w", "v", "u", "t", "s", "r", "q", "p", "o", "n",
+        "m", "l", "k", "j", "i", "h", "g", "f", "e", "d", "c", "b", "a"};
+
+    // Handle LHS
+    if (lhs().tensors()[0].indices().size() == 0) {
+      lhs_str = "CorrelationEnergy";
+    } else {
+      lhs_str = "S" + wicked2orca_spaces[get_spaces(lhs().tensors()[0])];
+    }
+    std::string lhs_indices =
+        get_unique_tensor_indices(lhs_tensor, index_map, unused_indices);
+    lhs_str += "(";
+    std::vector<int> permutation = wicked2orca_permutation(lhs().tensors()[0]);
+    for (int i = 0; i < lhs_indices.size(); ++i) {
+      lhs_str += lhs_indices[permutation[i]];
+      if (i != lhs_indices.size() - 1) {
+        lhs_str += ",";
+      }
+    }
+    lhs_str += ")";
+
+    // Handle RHS
+    std::vector<std::string> rhs_vec;
+    bool has_two_body_integral = false;
+    for (const auto &t : rhs().tensors()) {
+      std::string rhs_str;
+      bool is_onebody_hamiltonian = t.label() == "H" && t.indices().size() == 2;
+      bool is_twobody_hamiltonian = t.label() == "H" && t.indices().size() == 4;
+      if (is_onebody_hamiltonian) {
+        rhs_str += "FT";
+      } else if (is_twobody_hamiltonian) {
+        rhs_str += "I";
+        has_two_body_integral = true;
+      } else {
+        rhs_str += t.label() + wicked2orca_spaces[get_spaces(t)];
+      }
+      std::string t_indices =
+          get_unique_tensor_indices(t, index_map, unused_indices);
+      permutation = wicked2orca_permutation(t);
+      rhs_str += "(";
+      for (int i = 0; i < t_indices.size(); ++i) {
+        // Contracted indices need to be capitalized
+        char& idx = t_indices[permutation[i]];
+        bool is_contracted_idx = std::find(lhs_indices.begin(), lhs_indices.end(), t_indices[permutation[i]]) == lhs_indices.end();
+        if (is_contracted_idx) {
+          idx = std::toupper(idx, std::locale());
+        }
+        rhs_str += t_indices[permutation[i]];
+        if (i != t_indices.size() - 1) {
+          rhs_str += ",";
+        }
+      }
+      rhs_str += ") ";
+      rhs_vec.push_back(rhs_str);
+    }
+    ret += lhs_str + " += " + std::format("{: .9f}", rhs_factor().to_double()) +
+           " " + join(rhs_vec, "");
+    if (has_two_body_integral) {
+      // Add exchange term
+      std::vector<std::string> exchange_vec(rhs_vec);
+      for (auto& t : exchange_vec) {
+        // Find term corresponding to two body integral
+        if (t.starts_with("I(")) {
+          std::vector<std::string> indices = split(t.substr(2, t.size() - 4));
+          std::swap(indices[1], indices[3]);
+          std::string new_t;
+          new_t = "I(";
+          for (int i = 0; i < indices.size(); ++i) {
+            new_t += indices[i];
+            if (i != indices.size() - 1) {
+              new_t += ",";
+            }
+          }
+          new_t += ") ";
+          t = new_t;
+        }
+      }
+      ret += '\n' + lhs_str + " += " + std::format("{: .9f}", -rhs_factor().to_double()) +
+             " " + join(exchange_vec, "");
+    }
+    
+    return ret;
+  }
   std::string msg = "Equation::compile() - the argument '" + format +
                     "' is not valid. Choices are 'ambit' or 'einsum'";
   throw std::runtime_error(msg);
