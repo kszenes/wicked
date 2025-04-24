@@ -169,29 +169,48 @@ std::string Equation::compile(const std::string &format) const {
       }
       return spaces;
     };
-    auto wicked2orca_permutation = [](const auto &t) -> std::vector<int> {
-
-      const int n = t.indices().size();
+    auto wicked2orca_permutation = [](const int n) -> std::vector<int> {
       std::vector<int> indices(n);
       if (n == 2) {
         // NOTE: For some reason singles don't follow this convention
         // returns [0, 1] i.e., noop
         std::iota(indices.begin(), indices.end(), 0);
       } else {
-         // returns e.g: [2, 0, 3, 1] and [3, 0, 4, 1, 5, 2]
-         for (int i = 0; i < indices.size() / 2; ++i) {
-           indices[2 * i] = indices.size() / 2 + i;
-           indices[2 * i + 1] = i;
-         }
-       }
+        // returns e.g: [2, 0, 3, 1] and [3, 0, 4, 1, 5, 2]
+        for (int i = 0; i < indices.size() / 2; ++i) {
+          indices[2 * i] = indices.size() / 2 + i;
+          indices[2 * i + 1] = i;
+        }
+      }
       return indices;
+    };
+    auto wicked2orca_spaces = [](const std::string &str) -> std::string {
+      const std::vector<char> inactives = {'i', 'j', 'k', 'l'};
+      const std::vector<char> actives = {'t', 'u', 'v', 'w', 'x'};
+      const std::vector<char> virtuals = {'a', 'b', 'c', 'd', 'e', 'f'};
+
+      int inactive_index = 0;
+      int active_index = 0;
+      int virtual_index = 0;
+
+      std::string ret;
+
+      for (const auto &c : str) {
+        if (c == 'c') {
+          ret += inactives[inactive_index];
+          inactive_index++;
+        } else if (c == 'a') {
+          ret += actives[active_index];
+          active_index++;
+        } else {
+          ret += virtuals[virtual_index];
+          virtual_index++;
+        }
+      }
+      return ret;
     };
     // TODO: For now hard-coded, could be made generic
     // Also only supports singles and doubles
-    std::unordered_map<std::string, std::string> wicked2orca_spaces{
-        {"ca", "it"},     {"cv", "ia"},     {"av", "ta"},     {"ccvv", "ijab"},
-        {"ccaa", "ijtu"}, {"aavv", "tuab"}, {"cavv", "itab"}, {"ccav", "ijta"},
-        {"caaa", "ituv"}, {"aaav", "tuva"}, {"caav", "itua"}};
     std::map<std::string, std::string> index_map;
     std::vector<std::string> unused_indices = {
         "z", "y", "x", "w", "v", "u", "t", "s", "r", "q", "p", "o", "n",
@@ -201,12 +220,12 @@ std::string Equation::compile(const std::string &format) const {
     if (lhs().tensors()[0].indices().size() == 0) {
       lhs_str = "CorrelationEnergy";
     } else {
-      lhs_str = "S" + wicked2orca_spaces[get_spaces(lhs().tensors()[0])];
+      lhs_str = "S" + wicked2orca_spaces(get_spaces(lhs().tensors()[0]));
     }
     std::string lhs_indices =
         get_unique_tensor_indices(lhs_tensor, index_map, unused_indices);
     lhs_str += "(";
-    std::vector<int> permutation = wicked2orca_permutation(lhs().tensors()[0]);
+    std::vector<int> permutation = wicked2orca_permutation(lhs().tensors()[0].indices().size());
     for (int i = 0; i < lhs_indices.size(); ++i) {
       lhs_str += lhs_indices[permutation[i]];
       if (i != lhs_indices.size() - 1) {
@@ -222,22 +241,29 @@ std::string Equation::compile(const std::string &format) const {
       std::string rhs_str;
       bool is_onebody_hamiltonian = t.label() == "H" && t.indices().size() == 2;
       bool is_twobody_hamiltonian = t.label() == "H" && t.indices().size() == 4;
+      bool is_rdm_cumulant = t.label().starts_with("gamma") || t.label().starts_with("eta") || t.label().starts_with("lambda");
       if (is_onebody_hamiltonian) {
         rhs_str += "FT";
       } else if (is_twobody_hamiltonian) {
         rhs_str += "I";
         has_two_body_integral = true;
+      } else if (is_rdm_cumulant) {
+        // Do not append orbital space to RDMs or cumulants
+        rhs_str += t.label();
       } else {
-        rhs_str += t.label() + wicked2orca_spaces[get_spaces(t)];
+        // Append orbital spaces to all other tensors (should include only amps)
+        rhs_str += t.label() + wicked2orca_spaces(get_spaces(t));
       }
       std::string t_indices =
           get_unique_tensor_indices(t, index_map, unused_indices);
-      permutation = wicked2orca_permutation(t);
+      permutation = wicked2orca_permutation(t.indices().size());
       rhs_str += "(";
       for (int i = 0; i < t_indices.size(); ++i) {
         // Contracted indices need to be capitalized
-        char& idx = t_indices[permutation[i]];
-        bool is_contracted_idx = std::find(lhs_indices.begin(), lhs_indices.end(), t_indices[permutation[i]]) == lhs_indices.end();
+        char &idx = t_indices[permutation[i]];
+        bool is_contracted_idx =
+            std::find(lhs_indices.begin(), lhs_indices.end(),
+                      t_indices[permutation[i]]) == lhs_indices.end();
         if (is_contracted_idx) {
           idx = std::toupper(idx, std::locale());
         }
@@ -249,12 +275,12 @@ std::string Equation::compile(const std::string &format) const {
       rhs_str += ") ";
       rhs_vec.push_back(rhs_str);
     }
-    ret += lhs_str + " += " + std::format("{: .9f}", rhs_factor().to_double()) +
+    ret += lhs_str + " += " + std::format("{: }", rhs_factor().to_double()) +
            " " + join(rhs_vec, "");
     if (has_two_body_integral) {
       // Add exchange term
       std::vector<std::string> exchange_vec(rhs_vec);
-      for (auto& t : exchange_vec) {
+      for (auto &t : exchange_vec) {
         // Find term corresponding to two body integral
         if (t.starts_with("I(")) {
           std::vector<std::string> indices = split(t.substr(2, t.size() - 4));
@@ -271,10 +297,11 @@ std::string Equation::compile(const std::string &format) const {
           t = new_t;
         }
       }
-      ret += '\n' + lhs_str + " += " + std::format("{: .9f}", -rhs_factor().to_double()) +
-             " " + join(exchange_vec, "");
+      ret += '\n' + lhs_str +
+             " += " + std::format("{: }", -rhs_factor().to_double()) + " " +
+             join(exchange_vec, "");
     }
-    
+
     return ret;
   }
   std::string msg = "Equation::compile() - the argument '" + format +
