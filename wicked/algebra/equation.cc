@@ -169,6 +169,7 @@ std::string Equation::compile(const std::string &format) const {
       }
       return spaces;
     };
+    // Permutes thet tenosr indices from the wicked to the orca order
     auto wicked2orca_permutation = [](const int n) -> std::vector<int> {
       std::vector<int> indices(n);
       if (n == 2) {
@@ -212,6 +213,7 @@ std::string Equation::compile(const std::string &format) const {
     // TODO: For now hard-coded, could be made generic
     // Also only supports singles and doubles
     std::map<std::string, std::string> index_map;
+    // NOTE: Question do capitalized letters have semantics in orca_age
     std::vector<std::string> unused_indices = {
         "z", "y", "x", "w", "v", "u", "t", "s", "r", "q", "p", "o", "n",
         "m", "l", "k", "j", "i", "h", "g", "f", "e", "d", "c", "b", "a"};
@@ -225,7 +227,8 @@ std::string Equation::compile(const std::string &format) const {
     std::string lhs_indices =
         get_unique_tensor_indices(lhs_tensor, index_map, unused_indices);
     lhs_str += "(";
-    std::vector<int> permutation = wicked2orca_permutation(lhs().tensors()[0].indices().size());
+    std::vector<int> permutation =
+        wicked2orca_permutation(lhs().tensors()[0].indices().size());
     for (int i = 0; i < lhs_indices.size(); ++i) {
       lhs_str += lhs_indices[permutation[i]];
       if (i != lhs_indices.size() - 1) {
@@ -241,7 +244,9 @@ std::string Equation::compile(const std::string &format) const {
       std::string rhs_str;
       bool is_onebody_hamiltonian = t.label() == "H" && t.indices().size() == 2;
       bool is_twobody_hamiltonian = t.label() == "H" && t.indices().size() == 4;
-      bool is_rdm_cumulant = t.label().starts_with("gamma") || t.label().starts_with("eta") || t.label().starts_with("lambda");
+      bool is_rdm_cumulant = t.label().starts_with("gamma") ||
+                             t.label().starts_with("eta") ||
+                             t.label().starts_with("lambda");
       if (is_onebody_hamiltonian) {
         rhs_str += "FT";
       } else if (is_twobody_hamiltonian) {
