@@ -186,6 +186,7 @@ std::string Equation::compile(const std::string &format) const {
       return indices;
     };
     auto wicked2orca_spaces = [](const std::string &str) -> std::string {
+      // FIXME: Question: are these tensor indices stable in orca_age
       const std::vector<char> inactives = {'i', 'j', 'k', 'l'};
       const std::vector<char> actives = {'t', 'u', 'v', 'w', 'x'};
       const std::vector<char> virtuals = {'a', 'b', 'c', 'd', 'e', 'f'};
@@ -213,7 +214,7 @@ std::string Equation::compile(const std::string &format) const {
     // TODO: For now hard-coded, could be made generic
     // Also only supports singles and doubles
     std::map<std::string, std::string> index_map;
-    // NOTE: Question do capitalized letters have semantics in orca_age
+    // FIXME: Question do capitalized letters have semantics in orca_age
     std::vector<std::string> unused_indices = {
         "z", "y", "x", "w", "v", "u", "t", "s", "r", "q", "p", "o", "n",
         "m", "l", "k", "j", "i", "h", "g", "f", "e", "d", "c", "b", "a"};
@@ -242,6 +243,8 @@ std::string Equation::compile(const std::string &format) const {
     bool has_two_body_integral = false;
     for (const auto &t : rhs().tensors()) {
       std::string rhs_str;
+      // FIXME: Question: what other tensors could one find on the RHS
+      // Curretnly supports: 1-, 2-body integrals and RDMs cumulants
       bool is_onebody_hamiltonian = t.label() == "H" && t.indices().size() == 2;
       bool is_twobody_hamiltonian = t.label() == "H" && t.indices().size() == 4;
       bool is_rdm_cumulant = t.label().starts_with("gamma") ||
@@ -280,6 +283,8 @@ std::string Equation::compile(const std::string &format) const {
       rhs_str += ") ";
       rhs_vec.push_back(rhs_str);
     }
+    // FIXME: Question: note the space here, will this eventually be a 
+    // problem in orca_age?
     ret += lhs_str + " += " + std::format("{: }", rhs_factor().to_double()) +
            " " + join(rhs_vec, "");
     if (has_two_body_integral) {
@@ -302,6 +307,8 @@ std::string Equation::compile(const std::string &format) const {
           t = new_t;
         }
       }
+    // FIXME: Question: note the space here, will this eventually be a 
+    // problem in orca_age?
       ret += '\n' + lhs_str +
              " += " + std::format("{: }", -rhs_factor().to_double()) + " " +
              join(exchange_vec, "");
