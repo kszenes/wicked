@@ -1,11 +1,11 @@
 #include <algorithm>
 #include <format>
 #include <iostream>
+#include <stdexcept>
 
 #include "equation.h"
 #include "expression.h"
 #include "helpers/helpers.h"
-#include "sqoperator.h"
 #include "tensor.h"
 #include "wicked-def.h"
 
@@ -169,7 +169,8 @@ std::string Equation::compile(const std::string &format) const {
       }
       return spaces;
     };
-    // Permutes thet tenosr indices from the wicked to the orca order
+    // Permutes thet tensor indices from the wicked to the orca order
+    // NOTE: encodes reverse map destination -> source map (i.e., orca2wicked)
     auto wicked2orca_permutation = [](const int n) -> std::vector<int> {
       std::vector<int> indices(n);
       if (n == 2) {
@@ -179,8 +180,8 @@ std::string Equation::compile(const std::string &format) const {
       } else {
         // returns e.g: [2, 0, 3, 1] and [3, 0, 4, 1, 5, 2]
         for (int i = 0; i < indices.size() / 2; ++i) {
-          indices[2 * i] = indices.size() / 2 + i;
-          indices[2 * i + 1] = i;
+          indices[2 * i] = indices.size() / 2 + i; // orca even: upper index
+          indices[2 * i + 1] = i;                  // orca  odd: lower index
         }
       }
       return indices;
@@ -251,6 +252,7 @@ std::string Equation::compile(const std::string &format) const {
                              t.label().starts_with("eta") ||
                              t.label().starts_with("lambda");
       if (is_onebody_hamiltonian) {
+        // NOTE: 1-body is assumed to be total fock = fock core + fock active
         rhs_str += "FT";
       } else if (is_twobody_hamiltonian) {
         rhs_str += "I";
@@ -283,7 +285,7 @@ std::string Equation::compile(const std::string &format) const {
       rhs_str += ") ";
       rhs_vec.push_back(rhs_str);
     }
-    // FIXME: Question: note the space here, will this eventually be a 
+    // FIXME: Question: note the space here, will this eventually be a
     // problem in orca_age?
     ret += lhs_str + " += " + std::format("{: }", rhs_factor().to_double()) +
            " " + join(rhs_vec, "");
@@ -307,8 +309,8 @@ std::string Equation::compile(const std::string &format) const {
           t = new_t;
         }
       }
-    // FIXME: Question: note the space here, will this eventually be a 
-    // problem in orca_age?
+      // FIXME: Question: note the space here, will this eventually be a
+      // problem in orca_age?
       ret += '\n' + lhs_str +
              " += " + std::format("{: }", -rhs_factor().to_double()) + " " +
              join(exchange_vec, "");
