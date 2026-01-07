@@ -1,11 +1,14 @@
 #include <algorithm>
+#include <cctype>
 #include <format>
 #include <iostream>
 #include <stdexcept>
+#include <unordered_map>
 
 #include "equation.h"
 #include "expression.h"
 #include "helpers/helpers.h"
+#include "helpers/orbital_space.h"
 #include "tensor.h"
 #include "wicked-def.h"
 
@@ -156,7 +159,6 @@ std::string Equation::compile(const std::string &format) const {
     std::string lhs_str;
 
     const auto &lhs_tensor = lhs().tensors()[0];
-    std::string lhs_tensor_space;
 
     // Helper functions
     auto get_spaces = [](const auto &t) -> std::string {
@@ -169,7 +171,7 @@ std::string Equation::compile(const std::string &format) const {
       }
       return spaces;
     };
-    // Permutes thet tensor indices from the wicked to the orca order
+    // Permutes the tensor indices from the wicked to the orca order
     // NOTE: encodes reverse map destination -> source map (i.e., orca2wicked)
     auto wicked2orca_permutation = [](const int n) -> std::vector<int> {
       std::vector<int> indices(n);
@@ -185,6 +187,18 @@ std::string Equation::compile(const std::string &format) const {
         }
       }
       return indices;
+    };
+    auto spacetype2index = [](const int pos) -> std::string {
+      const auto& space = orbital_subspaces->space_type(pos);
+      if (space == SpaceType::Occupied) {
+        return "i";
+      }
+      if (space == SpaceType::Unoccupied) {
+        return "a";
+      }
+      if (space == SpaceType::General) {
+        return "t";
+      }
     };
     auto wicked2orca_spaces = [](const std::string &str) -> std::string {
       // FIXME: Question: are these tensor indices stable in orca_age
@@ -226,11 +240,24 @@ std::string Equation::compile(const std::string &format) const {
     } else {
       lhs_str = "S" + wicked2orca_spaces(get_spaces(lhs().tensors()[0]));
     }
-    std::string lhs_indices =
-        get_unique_tensor_indices(lhs_tensor, index_map, unused_indices);
-    lhs_str += "(";
+    auto get_indices_age = [&](const auto &tensor) -> std::vector<std::string> {
+      std::vector<std::string> indices;
+      for (const auto &idx : tensor.upper()) {
+        std::string new_idx = std::string(spacetype2index(idx.space()));
+        new_idx += idx.str().substr(1);
+        indices.push_back(new_idx);
+      }
+      for (const auto idx : tensor.lower()) {
+        std::string new_idx = std::string(spacetype2index(idx.space()));
+        new_idx += idx.str().substr(1);
+        indices.push_back(new_idx);
+      }
+      return indices;
+    };
     std::vector<int> permutation =
         wicked2orca_permutation(lhs().tensors()[0].indices().size());
+    std::vector<std::string> lhs_indices = get_indices_age(lhs_tensor);
+    lhs_str += "(";
     for (int i = 0; i < lhs_indices.size(); ++i) {
       lhs_str += lhs_indices[permutation[i]];
       if (i != lhs_indices.size() - 1) {
@@ -245,7 +272,7 @@ std::string Equation::compile(const std::string &format) const {
     for (const auto &t : rhs().tensors()) {
       std::string rhs_str;
       // FIXME: Question: what other tensors could one find on the RHS
-      // Curretnly supports: 1-, 2-body integrals and RDMs cumulants
+      // Currently supports: 1-, 2-body integrals and RDMs cumulants
       bool is_onebody_hamiltonian = t.label() == "H" && t.indices().size() == 2;
       bool is_twobody_hamiltonian = t.label() == "H" && t.indices().size() == 4;
       bool is_rdm_cumulant = t.label().starts_with("gamma") ||
@@ -264,18 +291,19 @@ std::string Equation::compile(const std::string &format) const {
         // Append orbital spaces to all other tensors (should include only amps)
         rhs_str += t.label() + wicked2orca_spaces(get_spaces(t));
       }
-      std::string t_indices =
-          get_unique_tensor_indices(t, index_map, unused_indices);
       permutation = wicked2orca_permutation(t.indices().size());
+      std::vector<std::string> t_indices = get_indices_age(t);
       rhs_str += "(";
       for (int i = 0; i < t_indices.size(); ++i) {
         // Contracted indices need to be capitalized
-        char &idx = t_indices[permutation[i]];
+        std::string &idx = t_indices[permutation[i]];
         bool is_contracted_idx =
             std::find(lhs_indices.begin(), lhs_indices.end(),
                       t_indices[permutation[i]]) == lhs_indices.end();
         if (is_contracted_idx) {
-          idx = std::toupper(idx, std::locale());
+          std::transform(idx.begin(), idx.end(), idx.begin(), [](const auto c) {
+            return std::toupper(c, std::locale());
+          });
         }
         rhs_str += t_indices[permutation[i]];
         if (i != t_indices.size() - 1) {
